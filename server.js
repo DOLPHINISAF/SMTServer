@@ -4,13 +4,13 @@ const { json } = require('stream/consumers');
 const WebSocket = require('ws');
 
 const wss = new WebSocket.Server({port : 1337});
-
+/*
 const sqlConnection = mysql.createConnection({
     host: '192.168.0.140',
     user: 'SMTServer',
     database: 'servermonitortool',
 });
-
+*/
 
 console.log("Started websocket!");
 
@@ -46,6 +46,10 @@ wss.on("connection", ws =>{
                 console.log("Received json to add param")
 
             }
+            else if(msgjson.type === "run_action"){
+                console.log(`Received json to activate action, action_name: "${msgjson.actionID}"`)
+                console.log(msgjson)
+            }
         }
 
         
@@ -56,7 +60,7 @@ wss.on("connection", ws =>{
         console.log("Lost Connection! Maybe disconnecteds");
     });
 
-
+    ws.send(JSON.stringify(GetTestJson()))
 });
 
 //For api auth, returns true for correct api, false otherwise
@@ -67,8 +71,7 @@ function HandleAuth(msgjson){
     console.log(msgjson);
 
     if(msgjson.source == "client"){
-        webClients.set(ReceivedAPI,ws);
-        return true;
+        //webClients.set(ReceivedAPI,ws);
     }
     else if(msgjson.source == "api"){
         console.log("Checking api in db");
@@ -90,4 +93,17 @@ function HandleAuth(msgjson){
             }
         )
     }
+}
+
+function GetTestJson(){
+    test_data_json = {
+        type:"data",
+        nameID:"Test_Name_From_Server",
+        description:"Test_Description",
+        unit:"Test_Unit",
+        value:"Test_Value"
+
+    }
+
+    return test_data_json
 }
