@@ -1,26 +1,25 @@
-const mysql = require('mysql2')
+const mysql = require('mysql2/promise')
 
 const { json } = require('stream/consumers');
+
 const WebSocket = require('ws');
 
-const wss = new WebSocket.Server({port : 1337});
-/*
-const sqlConnection = mysql.createConnection({
-    host: '192.168.0.140',
-    user: 'SMTServer',
-    database: 'servermonitortool',
+const wss = new WebSocket.Server({port: 1337});
+
+
+const sqlConnection = mysql.createPool({
+    host: "dolphinsibiu.ddns.net",
+    user: "SMTServer",
+    password: "",
+    database: "servermonitortool"
 });
-*/
 
 console.log("Started websocket!");
 
 const webClients = new Map();
 
-wss.on("connection", ws =>{
-    console.log("User connected");
-
-
-    clientAPI = "";
+wss.on("connection", async ws =>{
+    ws.bWebClient = false;
 
     ws.on("message", message =>{
 
@@ -32,15 +31,45 @@ wss.on("connection", ws =>{
             }
         
         if(msgjson.type){
+
             if(msgjson.type === "auth"){
- 
-                if(HandleAuth(msgjson) == false){
+                //if auth message comes from a web browser we don't need to check with db we just add them to connected user list
+                if (msgjson.source == "client"){
+                    console.log("Web client connected to server")
+                    ws.bWebClient = true;
+                    webClients.set(msgjson.APIKey,ws);
+                    console.log(msgjson)
+                }
+                else if(await HandleAuth(msgjson) == false){
+                    console.log("API tried to connect with wrong key")
+                    SendAuthResult(ws,"rejected")
                     ws.close();
                 }
+                else if(msgjson.source == "api"){
+                    console.log("API succesfully connected to server")
+                    console.log(`Added api client to hashmap, api: ${msgjson.APIKey}`);
+                    console.log(msgjson);
+                    apiClients.set(msgjson.APIKey,ws);
+                    SendAuthResult(ws,"accepted")
+                }
+                
     
             }
-            else if(msgjson.type === "data"){
-                //webClients[msgjson.APIKey].send(message);
+            //if the json contains data and the source is the api from the user's server we send it to the web if it exists
+            else if(msgjson.type === "data" && msgjson.source === "api"){
+                
+
+                if(!apiClients.has(msgjson.APIKey)){
+                    console.log("Unauthentificated api tries to send live data")
+                }
+                console.log("Received json to update param")
+                //we check if the web is connected
+                if(webClients.has(msgjson.APIKey)){
+                    webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+                }
+                else{
+                    console.log("Failed to find client in hashmap");
+                }
             }
             else if(msgjson.type === "add"){
                 console.log("Received json to add param")
@@ -65,34 +94,37 @@ wss.on("connection", ws =>{
 
 //For api auth, returns true for correct api, false otherwise
 //For user, returns true
-function HandleAuth(msgjson){
+async function HandleAuth(msgjson){
                
     ReceivedAPI = msgjson.APIKey;
     console.log(msgjson);
 
-    if(msgjson.source == "client"){
-        //webClients.set(ReceivedAPI,ws);
-    }
-    else if(msgjson.source == "api"){
+    if(msgjson.source == "api"){
         console.log("Checking api in db");
 
+        const [result] = await sqlConnection.query(
+        "SELECT * FROM users WHERE api_key = ?",
+        [ReceivedAPI]
+    );
 
-        query = `SELECT * FROM users WHERE api_key = \"${ReceivedAPI}\"`;
-        console.log(query);
-        sqlConnection.query(query,
-            function(err, results, fields){
-                if(results){
-                    console.log(`Found api in database: ${ReceivedAPI}`);
-                    return true;
-                }
-                else{
-                    console.log(`Did not find api in database: ${ReceivedAPI}`);
-                    return false;
-                }
-                    
-            }
-        )
+    if(result.length > 0) return true;
+    return false;
+
     }
+}
+
+
+function IsAPIConnected(json){
+    return apiClients.has(json.APIKey);
+}
+
+function SendAuthResult(ws, auth_result){
+    resultjson = {
+        type:"auth-status",
+        result:auth_result
+    }
+
+    ws.send(JSON.stringify(resultjson));
 }
 
 function GetTestJson(){
