@@ -16,19 +16,17 @@ const sqlConnection = mysql.createPool({
 
 console.log("Started websocket!");
 
+
+//each map stores the websockets for api and web
 const webClients = new Map();
+const apiClients = new Map();
 
 wss.on("connection", async ws =>{
     ws.bWebClient = false;
 
-    ws.on("message", message =>{
-
-        console.log("New message");
+    ws.on("message", async message =>{
 
         msgjson = JSON.parse(message);
-            if(msgjson.test == true && msgjson.source == "api"){
-                console.log("Api connected");
-            }
         
         if(msgjson.type){
 
@@ -71,25 +69,49 @@ wss.on("connection", async ws =>{
                     console.log("Failed to find client in hashmap");
                 }
             }
-            else if(msgjson.type === "add"){
+            else if(msgjson.type === "add" && msgjson.source === "api"){
                 console.log("Received json to add param")
+                if(webClients.has(msgjson.APIKey)){
+                    webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+                }
+                else{
+                    console.log("Failed to find client in hashmap");
+                }
+                console.log(msgjson);
 
             }
             else if(msgjson.type === "run_action"){
                 console.log(`Received json to activate action, action_name: "${msgjson.actionID}"`)
-                console.log(msgjson)
+
+                if(apiClients.has(msgjson.APIKey)){
+                    apiClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+                    console.log("Sent message to activate action to api", msgjson)
+                }
+                else console.log("Failed to find api client in hashmap");
+
             }
         }
-
+        else{
+            console.log("Received unknown message");
+        }
         
         
     });
     ws.on("close", ws =>{
-        webClients.delete(clientAPI);
-        console.log("Lost Connection! Maybe disconnecteds");
+        //TODO : MAKE METHOD TO GET API KEY FROM ws
+        if(ws.bWebClient){
+            webClients.delete("=");
+            console.log("Web Client disconnected!")
+        }
+        else{
+            apiClients.delete("");
+            console.log("API disconnected!")
+        }
+        
     });
 
-    ws.send(JSON.stringify(GetTestJson()))
+    //sending test values to web
+    //ws.send(JSON.stringify(GetTestJson()))
 });
 
 //For api auth, returns true for correct api, false otherwise
