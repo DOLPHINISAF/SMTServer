@@ -25,8 +25,8 @@ wss.on("connection", async ws =>{
     ws.bWebClient = false;
 
     ws.on("message", async message =>{
-
-        msgjson = JSON.parse(message);
+        
+            msgjson = JSON.parse(message);
         
         if(msgjson.type){
 
@@ -90,6 +90,23 @@ wss.on("connection", async ws =>{
                 else console.log("Failed to find api client in hashmap");
 
             }
+            else if(msgjson.type === "store"){
+                
+                await StoreToDb(msgjson)
+                //we store data web ui sent to json inside db
+            }
+            else if(msgjson.type === "load-user-config"){
+                const userConfig = {
+                    type:"user-config"
+                }
+                Object.assign(userConfig, await GetConfigFromDb(msgjson.APIKey));
+
+                ws.send(JSON.stringify(userConfig));
+                console.log("Sent user config to web client");
+            }
+            else if(msgjson.type === "remove"){
+                RemoveFromDb(msgjson);
+            }
         }
         else{
             console.log("Received unknown message");
@@ -111,7 +128,7 @@ wss.on("connection", async ws =>{
     });
 
     //sending test values to web
-    //ws.send(JSON.stringify(GetTestJson()))
+    //if(ws.bWebClient){ws.send(JSON.stringify(GetTestJson()));}
 });
 
 //For api auth, returns true for correct api, false otherwise
@@ -132,6 +149,81 @@ async function HandleAuth(msgjson){
     if(result.length > 0) return true;
     return false;
 
+    }
+}
+
+async function RemoveFromDb(msgjson){
+    console.log("User trying to delete parameter/action")
+    newUserConfig = {}
+
+    const oldUserConfig = await GetConfigFromDb(msgjson.APIKey);
+    console.log(oldUserConfig);
+    newUserConfig = oldUserConfig;
+    if(msgjson.itemtype === "parameter"){
+        newUserConfig.parameters = newUserConfig.parameters.filter(parameter => parameter.nameID !== msgjson.name);
+    }
+    if(msgjson.itemtype === "action"){
+        newUserConfig.actions = newUserConfig.actions.filter(action => action.actionID !== msgjson.name);
+    }
+    console.log(newUserConfig);
+    
+    await sqlConnection.query(
+        "UPDATE users SET user_config = ? WHERE api_key = ?",
+        [JSON.stringify(newUserConfig), msgjson.APIKey]
+    );
+    
+}
+async function StoreToDb(msgjson){
+    console.log(msgjson);
+    const currentUserConfig = await GetConfigFromDb(msgjson.APIKey);
+
+    if(msgjson.storetype === "parameter"){
+        
+        const parameter = {}
+        parameter.nameID = msgjson.nameID;
+        parameter.description = msgjson.description;
+        parameter.unit = msgjson.unit;
+
+        console.log(`User trying to store new parameter `)
+        console.log(parameter)
+
+        currentUserConfig.parameters.push(parameter)
+    }
+    else if(msgjson.storetype === "action"){
+        
+
+        const action = {}
+        action.actionID = msgjson.actionID;
+        action.actiondescription = msgjson.actiondescription;
+
+        console.log(`User trying to store new action`)
+        console.log(action)
+
+        currentUserConfig.actions.push(action)
+    }
+    else {console.log("StoreToDb - Unknown storetype")}
+
+    await sqlConnection.query(
+        "UPDATE users SET user_config = ? WHERE api_key = ?",
+        [JSON.stringify(currentUserConfig), msgjson.APIKey]
+    );
+}
+
+async function GetConfigFromDb(apiKey) {
+    try {
+        const [rows] = await sqlConnection.query(
+            "SELECT user_config FROM users WHERE api_key = ?",
+            [apiKey]
+        );
+
+        if (rows.length == 0) {
+            return null; // invalid API key
+        }
+        return rows[0].user_config; // already JSON if MySQL JSON type
+    } 
+    catch (err) {
+        console.error("DB error:", err);
+        
     }
 }
 
