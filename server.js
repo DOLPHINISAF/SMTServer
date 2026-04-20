@@ -5,7 +5,7 @@ const { json } = require('stream/consumers');
 const WebSocket = require('ws');
 
 const wss = new WebSocket.Server({port: 1337});
-
+console.log("Started websocket!");
 
 const sqlConnection = mysql.createPool({
     host: "dolphinsibiu.ddns.net",
@@ -14,141 +14,121 @@ const sqlConnection = mysql.createPool({
     database: "servermonitortool"
 });
 
-console.log("Started websocket!");
-
 
 //each map stores the websockets for api and web
 const webClients = new Map();
 const apiClients = new Map();
 
-wss.on("connection", async ws =>{
+wss.on("connection", (ws) =>{
     ws.bWebClient = false;
+    ws.connectionKey = "";
 
     ws.on("message", async message =>{
         
+        msgjson = {}
+        try{
             msgjson = JSON.parse(message);
-        
-        if(msgjson.type){
+        }
+        catch(e){
+            console.log("Received message is not valid json");
+            return;
+        }
 
-            if(msgjson.type === "auth"){
-                //if auth message comes from a web browser we don't need to check with db we just add them to connected user list
-                if (msgjson.source == "client"){
-                    console.log("Web client connected to server")
-                    ws.bWebClient = true;
-                    webClients.set(msgjson.APIKey,ws);
-                    console.log(msgjson)
-                }
-                else if(await HandleAuth(msgjson) == false){
+        switch(msgjson.type){
+            case "auth-client":
+                console.log("Web client connected to server")
+                ws.bWebClient = true;
+                ws.connectionKey = msgjson.APIKey;
+                webClients.set(ws.connectionKey,ws);
+                break;
+            case "auth-api":              
+                if(await HandleAuth(msgjson) == false){
                     console.log("API tried to connect with wrong key")
                     SendAuthResult(ws,"rejected")
                     ws.close();
                 }
-                else if(msgjson.source == "api"){
-                    console.log("API succesfully connected to server")
-                    console.log(`Added api client to hashmap, api: ${msgjson.APIKey}`);
-                    console.log(msgjson);
-                    apiClients.set(msgjson.APIKey,ws);
+                else{
+                    ws.connectionKey = msgjson.APIKey;
+                    apiClients.set(ws.connectionKey,ws);
                     SendAuthResult(ws,"accepted")
                 }
-                
-    
-            }
-            //if the json contains data and the source is the api from the user's server we send it to the web if it exists
-            else if(msgjson.type === "data" && msgjson.source === "api"){
-                
-
-                if(!apiClients.has(msgjson.APIKey)){
-                    console.log("Unauthentificated api tries to send live data")
-                }
-                console.log("Received json to update param")
-                //we check if the web is connected
-                if(webClients.has(msgjson.APIKey)){
-                    webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
-                }
-                else{
-                    console.log("Failed to find client in hashmap");
-                }
-            }
-            else if(msgjson.type === "add" && msgjson.source === "api"){
-                console.log("Received json to add param")
-                if(webClients.has(msgjson.APIKey)){
-                    webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
-                }
-                else{
-                    console.log("Failed to find client in hashmap");
-                }
-                console.log(msgjson);
-
-            }
-            else if(msgjson.type === "run_action"){
+                break;
+            case "data":
+                HandleParameterUpdate(msgjson);
+                break;
+            case "run_action":
                 console.log(`Received json to activate action, action_name: "${msgjson.actionID}"`)
-
-                if(apiClients.has(msgjson.APIKey)){
-                    apiClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+                if(apiClients.has(ws.connectionKey)){
+                    apiClients.get(ws.connectionKey).send(JSON.stringify(msgjson));
                     console.log("Sent message to activate action to api", msgjson)
                 }
                 else console.log("Failed to find api client in hashmap");
-
-            }
-            else if(msgjson.type === "store"){
-                
+                break;
+            case "store":
                 await StoreToDb(msgjson)
-                //we store data web ui sent to json inside db
-            }
-            else if(msgjson.type === "load-user-config"){
+                break;
+            case "load-user-config":
                 const userConfig = {
                     type:"user-config"
                 }
-                Object.assign(userConfig, await GetConfigFromDb(msgjson.APIKey));
+                Object.assign(userConfig, await GetConfigFromDb(ws.connectionKey));
 
                 ws.send(JSON.stringify(userConfig));
                 console.log("Sent user config to web client");
-            }
-            else if(msgjson.type === "remove"){
+                console.log(userConfig);
+                break;
+            case "remove":
                 RemoveFromDb(msgjson);
-            }
+                break;
+            default:
+                console.log("Received unknown message");
         }
-        else{
-            console.log("Received unknown message");
-        }
-        
-        
+            
     });
-    ws.on("close", ws =>{
-        //TODO : MAKE METHOD TO GET API KEY FROM ws
+
+
+    ws.on("close", (code, reason) =>{
         if(ws.bWebClient){
-            webClients.delete("=");
+            webClients.delete(ws.connectionKey);
             console.log("Web Client disconnected!")
         }
         else{
-            apiClients.delete("");
+            apiClients.delete(ws.connectionKey);
             console.log("API disconnected!")
         }
         
     });
 
-    //sending test values to web
-    //if(ws.bWebClient){ws.send(JSON.stringify(GetTestJson()));}
 });
 
-//For api auth, returns true for correct api, false otherwise
-//For user, returns true
+//True if found in db, false otherwise
 async function HandleAuth(msgjson){
                
     ReceivedAPI = msgjson.APIKey;
     console.log(msgjson);
 
-    if(msgjson.source == "api"){
-        console.log("Checking api in db");
 
-        const [result] = await sqlConnection.query(
+    const [result] = await sqlConnection.query(
         "SELECT * FROM users WHERE api_key = ?",
         [ReceivedAPI]
-    );
+        );
 
     if(result.length > 0) return true;
     return false;
 
+}
+
+function HandleParameterUpdate(msgjson){
+    if(!apiClients.has(msgjson.APIKey)){
+            console.log("Unauthentificated api tries to send live data")
+        }
+    console.log("Received json to update param")
+    //we check if the web is connected
+    if(webClients.has(msgjson.APIKey)){
+        webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+    }
+    else{
+        console.log("Failed to find client in hashmap");
     }
 }
 
@@ -173,6 +153,7 @@ async function RemoveFromDb(msgjson){
     );
     
 }
+
 async function StoreToDb(msgjson){
     console.log(msgjson);
     const currentUserConfig = await GetConfigFromDb(msgjson.APIKey);
@@ -227,11 +208,6 @@ async function GetConfigFromDb(apiKey) {
     }
 }
 
-
-function IsAPIConnected(json){
-    return apiClients.has(json.APIKey);
-}
-
 function SendAuthResult(ws, auth_result){
     resultjson = {
         type:"auth-status",
@@ -239,17 +215,4 @@ function SendAuthResult(ws, auth_result){
     }
 
     ws.send(JSON.stringify(resultjson));
-}
-
-function GetTestJson(){
-    test_data_json = {
-        type:"data",
-        nameID:"Test_Name_From_Server",
-        description:"Test_Description",
-        unit:"Test_Unit",
-        value:"Test_Value"
-
-    }
-
-    return test_data_json
 }
