@@ -39,7 +39,7 @@ wss.on("connection", (ws) =>{
                 console.log("Web client connected to server")
                 ws.bWebClient = true;
                 ws.connectionKey = msgjson.APIKey;
-                webClients.set(ws.connectionKey,ws);
+                AddWebClients(ws.connectionKey, ws);
                 break;
             case "auth-api":              
                 if(await HandleAuth(msgjson) == false){
@@ -77,6 +77,9 @@ wss.on("connection", (ws) =>{
                 console.log("Sent user config to web client");
                 console.log(userConfig);
                 break;
+            case "action_status":
+                HandleStatusUpdate(msgjson);
+                break;
             case "remove":
                 RemoveFromDb(msgjson);
                 break;
@@ -89,7 +92,8 @@ wss.on("connection", (ws) =>{
 
     ws.on("close", (code, reason) =>{
         if(ws.bWebClient){
-            webClients.delete(ws.connectionKey);
+            //webClients.delete(ws.connectionKey);
+            RemoveWebClient(ws.connectionKey, ws);
             console.log("Web Client disconnected!")
         }
         else{
@@ -118,6 +122,26 @@ async function HandleAuth(msgjson){
 
 }
 
+function HandleStatusUpdate(msgjson){
+    if(!apiClients.has(msgjson.APIKey)){
+            console.log("Unauthentificated api tries to send live data")
+        }
+    console.log("Received json to update action status")
+    //we check if the web is connected
+    if(webClients.has(msgjson.APIKey)){
+        //webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+        const webClientsList = webClients.get(msgjson.APIKey);
+
+        webClientsList.forEach(ws => {
+            ws.send(JSON.stringify(msgjson));
+        });
+
+    }
+    else{
+        console.log("Failed to find client in hashmap");
+    }
+}
+
 function HandleParameterUpdate(msgjson){
     if(!apiClients.has(msgjson.APIKey)){
             console.log("Unauthentificated api tries to send live data")
@@ -125,7 +149,12 @@ function HandleParameterUpdate(msgjson){
     console.log("Received json to update param")
     //we check if the web is connected
     if(webClients.has(msgjson.APIKey)){
-        webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+        //webClients.get(msgjson.APIKey).send(JSON.stringify(msgjson));
+        const webClientsList = webClients.get(msgjson.APIKey);
+
+        webClientsList.forEach(ws => {
+            ws.send(JSON.stringify(msgjson));
+        });
     }
     else{
         console.log("Failed to find client in hashmap");
@@ -182,7 +211,9 @@ async function StoreToDb(msgjson){
 
         currentUserConfig.actions.push(action)
     }
-    else {console.log("StoreToDb - Unknown storetype")}
+    else{
+        console.log("StoreToDb - Unknown storetype");
+    }
 
     await sqlConnection.query(
         "UPDATE users SET user_config = ? WHERE api_key = ?",
@@ -215,4 +246,23 @@ function SendAuthResult(ws, auth_result){
     }
 
     ws.send(JSON.stringify(resultjson));
+}
+
+
+function AddWebClients(apiKey, ws){
+    if (!webClients.has(apiKey)) {
+        webClients.set(apiKey, new Set());
+    }
+
+    webClients.get(apiKey).add(ws);
+}
+function RemoveWebClient(apiKey, ws) {
+    if (!webClients.has(apiKey)) return;
+
+    const clients = webClients.get(apiKey);
+    clients.delete(ws);
+
+    if (clients.size === 0) {
+        webClients.delete(apiKey);
+    }
 }
