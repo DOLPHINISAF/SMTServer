@@ -3,9 +3,10 @@ const mysql = require('mysql2/promise')
 const { json } = require('stream/consumers');
 
 const WebSocket = require('ws');
+const fs = require("fs");
+const https = require("https");
 
-const wss = new WebSocket.Server({port: 1337});
-console.log("Started websocket!");
+
 
 const sqlConnection = mysql.createPool({
     host: "dolphinsibiu.ddns.net",
@@ -14,6 +15,16 @@ const sqlConnection = mysql.createPool({
     database: "servermonitortool"
 });
 
+const server = https.createServer({
+    key: fs.readFileSync("dolphinsibiu.ddns.net-key.pem"),
+    cert: fs.readFileSync("dolphinsibiu.ddns.net-chain.pem"),
+    port: 1337});
+
+const wss = new WebSocket.Server({ server });
+
+server.listen(1337, () => {
+    console.log("HTTPS + WSS running on port 443");
+});
 
 //each map stores the websockets for api and web
 const webClients = new Map();
@@ -22,7 +33,7 @@ const apiClients = new Map();
 wss.on("connection", (ws) =>{
     ws.bWebClient = false;
     ws.connectionKey = "";
-
+    
     ws.on("message", async message =>{
         
         msgjson = {}
